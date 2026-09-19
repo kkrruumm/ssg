@@ -1,0 +1,134 @@
+#!/bin/sh
+# usage: ssg [ build | postlist | postindex | feed | posthdr FILE ]
+
+set -u
+
+TITLE=${TITLE:-example.com} # site name, also stripped off page titles
+URL=${URL:-https://example.com} # site root
+SUBTITLE=${SUBTITLE:-Posts from $TITLE} # feed subtitle
+SRC=${SRC:-src} # markdown and static files
+DST=${DST:-public} # where the built site is output
+LAYOUT=${LAYOUT:-layout} # header.html and footer.html
+POSTSDIR=${POSTSDIR:-posts} # posts dir
+
+URL=${URL%/}
+
+# this escapes \ & and | so a string can be used as a sed replacement
+sedesc() { sed -e 's,[\\&|],\\&,g'; }
+
+# escape & < > for xml
+xmlesc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+
+# meta FILE FIELD [DEFAULT] - one metadata field of a md file
+meta() { lowdown -m "$2=${3-}" -X "$2" "$1"; }
+
+# the site relative url of a source file, so like
+# src/posts/xyz/index.md -> /posts/xyz
+href() { _h=${1#"$SRC"}; printf '%s\n' "${_h%index.md}"; }
+
+# the title of a page with the site name stripped
+# foo | $TITLE -> foo
+pagetitle() {
+    _t=$(meta "$1" title "")
+    printf '%s\n' "${_t% | "$TITLE"}"
+}
+
+# header PAGETITLE SECTION, the layout header with its placeholders filled
+header() {
+    sed -e "s|{{title}}|$(printf '%s' "$1" | sedesc)|g" \
+        -e "s|{{section}}|$(printf '%s' "$2" | sedesc)|g" "$LAYOUT/header.html"
+}
+
+# the post header block for $1 or nothing when the page has no date
+# (i.e. it is an ordinary page rather than a post)
+posthdr() {
+    _d=$(meta "$1" date "")
+    [ -n "$_d" ] || return 0
+    printf '<h2>%s</h2>\n<time datetime="%s">%s</time> - <span class="tags">%s</span>\n' \
+        "$(pagetitle "$1")" "$_d" "$(meta "$1" pubdate "")" "$(meta "$1" tags "")"
+}
+
+# "<iso-date> <path>" for every post, newest first
+postlist() {
+    for _p in "$SRC/$POSTSDIR"/*/index.md ; do
+        [ -e "$_p" ] || continue # unexpanded glob so no posts yet
+        printf '%s %s\n' "$(meta "$_p" date 1970-01-01)" "$_p"
+    done | sort -r
+}
+
+# the body of the posts listing page
+postindex() {
+    postlist | while read -r _ _p ; do # date split off and dropped
+        printf '<p class="postDate">%s</p>\n<h2 class="post"><a href="%s">%s</a></h2>\n' \
+            "$(meta "$_p" pubdate "" | sed "s/^\([A-Z][a-z][a-z]\)[a-z]*/\1/")" \
+            "$(href "$_p")" "$(pagetitle "$_p")"
+    done
+}
+
+# the atom feed
+feed() {
+    printf '<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n<title>%s</title>\n<subtitle>%s</subtitle>\n<id>%s/</id>\n<link rel="alternate" href="%s/"/>\n<link rel="self" href="%s/%s/index.xml"/>\n<updated>%s</updated>\n' \
+        "$(printf '%s' "$TITLE" | xmlesc)" "$(printf '%s' "$SUBTITLE" | xmlesc)" \
+        "$URL" "$URL" "$URL" "$POSTSDIR" "$(date -u "+%Y-%m-%dT%H:%M:%SZ")"
+
+    postlist | while read -r _d _p ; do
+        _l=$URL$(href "$_p")
+        printf '<entry>\n<title>%s</title>\n<id>%s</id>\n<link rel="alternate" href="%s"/>\n<updated>%s</updated>\n<content type="html">' \
+            "$(pagetitle "$_p" | xmlesc)" "$_l" "$_l" "$_d"
+        lowdown --out-no-smarty "$_p" | xmlesc
+        printf '</content>\n</entry>\n'
+    done
+
+    printf '</feed>\n'
+}
+
+# generate html for every markdown file and everything else just gets
+# copied over and then the two generated pages (posts listing and feed)
+build() {
+    # skips wild editor droppings
+    find "$SRC" -type f ! -name "*~" ! -name "#*#" ! -name ".#*" | sed "s|^$SRC/||" |
+    while read -r rel ; do
+        case $rel in
+        *.md)
+            dst=$DST/${rel%.md}.html
+            section=${rel%%/*}
+            [ "$section" != index.md ] || section=home
+            mkdir -p "${dst%/*}" || continue
+            {
+                header "$(meta "$SRC/$rel" title "${rel%.md}")" "$section"
+                posthdr "$SRC/$rel"
+                lowdown --out-no-smarty "$SRC/$rel"
+                cat "$LAYOUT/footer.html"
+            } > "$dst"
+            ;;
+        *)
+            dst=$DST/$rel
+            mkdir -p "${dst%/*}" || continue
+            cp -p "$SRC/$rel" "$dst" || continue
+            ;;
+        esac
+        printf '%s\n' "$dst"
+    done
+
+    mkdir -p "$DST/$POSTSDIR" || return 1
+    {
+        header "$POSTSDIR | $TITLE" "$POSTSDIR"
+        postindex
+        cat "$LAYOUT/footer.html"
+    } > "$DST/$POSTSDIR/index.html"
+    printf '%s\n' "$DST/$POSTSDIR/index.html"
+
+    feed > "$DST/$POSTSDIR/index.xml"
+    printf '%s\n' "$DST/$POSTSDIR/index.xml"
+}
+
+case ${1:-build} in
+    build) build ;;
+    postlist) postlist ;;
+    postindex) postindex ;;
+    feed) feed ;;
+    posthdr) [ $# -eq 2 ] || { printf '%s\n' "usage: ${0##*/} posthdr FILE" >&2; exit 1; }
+        posthdr "$2" ;;
+    *) printf '%s\n' "usage: ${0##*/} [ build | postlist | postindex | feed | posthdr FILE ]" >&2
+       exit 1 ;;
+esac
