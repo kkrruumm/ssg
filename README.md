@@ -95,12 +95,18 @@ at the very top.
 
 there is currently no functional tag viewer, TODO.
 
+## atom feed
+
+yes, this can produce atom feeds! this will be done automatically if you have posts.
+
 ## building
 
 just run `./ssg` or `./ssg build` from the root of your website.
+
+after this, you should have a public/ directory that contains your built website.
 
 # contributing
 
 the point of this isn't to have every feature in the world, but features that fit the vibe check will *absolutely* be accepted.
 
-as a general guideline though, usage of non busybox compatible/POSIX shell features will be accepted.
+as a general guideline though, usage of non busybox compatible/POSIX shell features will not be accepted.
