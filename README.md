@@ -55,7 +55,7 @@ anything that isn't a markdown file will be copied over verbatim, so `image.png`
 
 ## placeholders
 
-if you want to use them, there are `{{title}}` and `{{section}}` placeholders the script will replace during build for your `header.html`.
+if you want to use them, there are `{{title}}`, `{{section}}`, {{path}}, and {{sidebar}} placeholders the script will replace during build for your `header.html`.
 
 more of these should probably be added in the future, but these serve for kris.sh via:
 
@@ -80,6 +80,38 @@ more of these should probably be added in the future, but these serve for kris.s
           <a class="navContent" href="/posts/index.xml" title="blog feed">~/rss</a>
     </div></div></header>
 <main>
+```
+
+and basixlinux.org via:
+```
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{title}}</title>
+    <link rel="icon" href="/favicon.ico">
+    <link rel="preload" href="/fonts/dejavusans/DejaVuSans.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/css/main.css">
+  </head>
+  <body data-section="{{section}}">
+
+    <div id="topbar">
+      <div id="sites">
+        <a href="https://github.com/kkrruumm/basix-packages">basix-packages</a> |
+        <a href="https://github.com/kkrruumm/bpm">bpm</a>
+      </div>
+    </div>
+
+    <div id="headings">
+      <h1 id="sitename">
+{{path}}
+      </h1>
+    </div>
+
+{{sidebar}}
+
+    <div id="content">
 ```
 
 ## pages

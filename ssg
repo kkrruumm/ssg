@@ -10,6 +10,7 @@ SRC=${SRC:-src} # markdown and static files
 DST=${DST:-public} # where the built site is output
 LAYOUT=${LAYOUT:-layout} # header.html and footer.html
 POSTSDIR=${POSTSDIR:-posts} # posts dir
+POSTS=${POSTS:-0} # 1 builds the posts listing and feed, 0 skips them
 
 URL=${URL%/}
 
@@ -33,10 +34,140 @@ pagetitle() {
     printf '%s\n' "${_t% | "$TITLE"}"
 }
 
-# header PAGETITLE SECTION, the layout header with its placeholders filled
+# pageurl REL, the url a source file is built to, so like
+# docs/index.md -> /docs/, xyz.md -> /xyz.html, index.md -> /
+pageurl() {
+    case $1 in
+    index.md) printf '/\n' ;;
+    */index.md) printf '/%s\n' "${1%index.md}" ;;
+    *.md) printf '/%s.html\n' "${1%.md}" ;;
+    *) printf '/%s\n' "$1" ;;
+    esac
+}
+
+TAB=$(printf '\t')
+
+# navents DIR, "url<tab>label<tab>subdir<tab>source" for every nav entry in DIR
+# a suâdir counts as a page if it has an index.md with the posts dir being
+# an exception, loose .md files count as pages on their own
+navents() {
+    for _ee in "$1"/* ; do
+        [ -e "$_ee" ] || continue
+        _eb=${_ee##*/}
+        case $_eb in index.md|_*|.*|*~|"#"*) continue ;; esac
+        if [ -d "$_ee" ] ; then
+            { [ -f "$_ee/index.md" ] ||
+              { [ "$POSTS" = 1 ] && [ "$_eb" = "$POSTSDIR" ] ; } ; } || continue
+            printf '%s\t%s/\t%s\t%s\n' \
+                "$(pageurl "${_ee#"$SRC"/}/index.md")" "$_eb" "$_ee" "$_ee/index.md"
+        else
+            case $_eb in *.md) ;; *) continue ;; esac
+            printf '%s\t%s\t\t%s\n' "$(pageurl "${_ee#"$SRC"/}")" "${_eb%.md}" "$_ee"
+        fi
+    done
+}
+
+# dirindex DIR, a linked list of DIRs children, this uses each pages title
+# metadata if it has any and its dir name otherwise
+# this is what {{index}} in a md body expands to so an index shouldnt have
+# to be maintained by hand
+dirindex() {
+    _dents=$(navents "$1")
+    [ -n "$_dents" ] || { printf '<p class="empty">Nothing here yet.</p>\n'; return 0; }
+    printf '<ul class="dirindex">\n'
+    printf '%s\n' "$_dents" | while IFS=$TAB read -r _du _dl _dsub _dmd ; do
+        _dt=
+        [ -f "$_dmd" ] && _dt=$(pagetitle "$_dmd")
+        [ -n "$_dt" ] || _dt=$_dl
+        printf '<li><a href="%s">%s</a></li>\n' "$_du" "$_dt"
+    done
+    printf '</ul>\n'
+}
+
+# body REL, the rendered markdown of $SRC/$REL with a line that has the
+# {{index}} marker swapped for a listing of the pages own dir
+# the grep here SHOULD keep normal pages out of the loop
+body() {
+    if ! grep -q '{{index}}' "$SRC/$1" ; then
+        lowdown --out-no-smarty "$SRC/$1"
+        return 0
+    fi
+    _bd=${1%/*}
+    if [ "$_bd" != "$1" ] ; then _bd=$SRC/$_bd ; else _bd=$SRC ; fi
+    lowdown --out-no-smarty "$SRC/$1" |
+    while IFS= read -r _bl || [ -n "$_bl" ] ; do
+        case $_bl in
+        *"{{index}}"*) dirindex "$_bd" ;;
+        *) printf '%s\n' "$_bl" ;;
+        esac
+    done
+}
+
+# navtree DIR CURRENTURL DEPTH, the navlist for a directory
+# the entry that is a (grand?)parent of CURRENTURL gets its own children nested inside of it
+# so only the branch that leads to the current page gets expanded
+navtree() {
+    _nents=$(navents "$1")
+    [ -n "$_nents" ] || return 0
+    printf '<ul class="nav-l%s">\n' "$3"
+    printf '%s\n' "$_nents" | while IFS=$TAB read -r _nu _nl _nsub _nmd ; do
+        _ncls=
+        if [ "$_nu" = "$2" ] ; then
+            _ncls=current # the page being built
+        else
+            # a prefix match is one of its grandparents, so the whole open
+            # branch stays highlighted
+            case $2 in "$_nu"?*) _ncls=here ;; esac
+        fi
+        if [ -z "$_ncls" ] ; then
+            printf '<li><a href="%s">%s</a></li>\n' "$_nu" "$_nl"
+            continue
+        fi
+        # a dir expands when you're inside it and also when you're on its index
+        printf '<li class="%s"><a href="%s">%s</a>\n' "$_ncls" "$_nu" "$_nl"
+        # subshell so recursive calls dont fuck up vars
+        [ -z "$_nsub" ] || ( navtree "$_nsub" "$2" "$(($3 + 1))" )
+        printf '</li>\n'
+    done
+    printf '</ul>\n'
+}
+
+# sidebar REL, the werc style nav for source file $SRC/$REL
+sidebar() {
+    printf '<nav id="menu">\n'
+    navtree "$SRC" "$(pageurl "$1")" 0
+    printf '</nav>\n'
+}
+
+# breadcrumb REL, "site / dir / dir /" with every part linked
+breadcrumb() {
+    printf '<a href="/">%s</a>' "$TITLE"
+    _bs=${1%/*}
+    [ "$_bs" != "$1" ] || _bs=
+    _ba=
+    while [ -n "$_bs" ] ; do
+        _bh=${_bs%%/*}
+        case $_bs in */*) _bs=${_bs#*/} ;; *) _bs= ;; esac
+        _ba=$_ba/$_bh
+        printf ' / <a href="%s/">%s</a>' "$_ba" "$_bh"
+    done
+    printf '\n'
+}
+
+# header PAGETITLE SECTION REL, the layout header with its placeholders filled
+# {{title}} and {{section}} are single line so sed handles those, the nav blocks
+# are multiline so any line that has one is swapped entirely, keep {{sidebar}} and {{path}}
+# on their own lines
 header() {
     sed -e "s|{{title}}|$(printf '%s' "$1" | sedesc)|g" \
-        -e "s|{{section}}|$(printf '%s' "$2" | sedesc)|g" "$LAYOUT/header.html"
+        -e "s|{{section}}|$(printf '%s' "$2" | sedesc)|g" "$LAYOUT/header.html" |
+    while IFS= read -r _hl || [ -n "$_hl" ] ; do
+        case $_hl in
+        *"{{sidebar}}"*) sidebar "${3-index.md}" ;;
+        *"{{path}}"*) breadcrumb "${3-index.md}" ;;
+        *) printf '%s\n' "$_hl" ;;
+        esac
+    done
 }
 
 # the post header block for $1 or nothing when the page has no date
@@ -88,16 +219,18 @@ build() {
     # skips wild editor droppings
     find "$SRC" -type f ! -name "*~" ! -name "#*#" ! -name ".#*" | sed "s|^$SRC/||" |
     while read -r rel ; do
+        case $rel in "$POSTSDIR"/*) [ "$POSTS" = 1 ] || continue ;; esac
         case $rel in
         *.md)
             dst=$DST/${rel%.md}.html
             section=${rel%%/*}
             [ "$section" != index.md ] || section=home
+            section=${section%.md} # top level page so strip the extension
             mkdir -p "${dst%/*}" || continue
             {
-                header "$(meta "$SRC/$rel" title "${rel%.md}")" "$section"
+                header "$(meta "$SRC/$rel" title "${rel%.md}")" "$section" "$rel"
                 posthdr "$SRC/$rel"
-                lowdown --out-no-smarty "$SRC/$rel"
+                body "$rel"
                 cat "$LAYOUT/footer.html"
             } > "$dst"
             ;;
@@ -110,9 +243,11 @@ build() {
         printf '%s\n' "$dst"
     done
 
+    [ "$POSTS" = 1 ] || return 0
+
     mkdir -p "$DST/$POSTSDIR" || return 1
     {
-        header "$POSTSDIR | $TITLE" "$POSTSDIR"
+        header "$POSTSDIR | $TITLE" "$POSTSDIR" "$POSTSDIR/index.md"
         postindex
         cat "$LAYOUT/footer.html"
     } > "$DST/$POSTSDIR/index.html"
@@ -129,6 +264,8 @@ case ${1:-build} in
     feed) feed ;;
     posthdr) [ $# -eq 2 ] || { printf '%s\n' "usage: ${0##*/} posthdr FILE" >&2; exit 1; }
         posthdr "$2" ;;
-    *) printf '%s\n' "usage: ${0##*/} [ build | postlist | postindex | feed | posthdr FILE ]" >&2
+    sidebar) [ $# -eq 2 ] || { printf '%s\n' "usage: ${0##*/} sidebar REL" >&2; exit 1; }
+        sidebar "$2" ;;
+    *) printf '%s\n' "usage: ${0##*/} [ build | postlist | postindex | feed | posthdr FILE | sidebar REL ]" >&2
        exit 1 ;;
 esac
