@@ -5,7 +5,7 @@ this script is currently capable of producing the pages and atom feed for my web
 
 most likely, this script will grow as time goes on and it's used for more things.
 
-this currently `cloc`s in at 98sloc, though extreme minimalism is, as per usual, not the primary goal here.
+this currently `cloc`s in at 202sloc, though extreme minimalism is, as per usual, not the primary goal here.
 
 # dependencies
 
@@ -55,7 +55,7 @@ anything that isn't a markdown file will be copied over verbatim, so `image.png`
 
 ## placeholders
 
-if you want to use them, there are `{{title}}`, `{{section}}`, {{path}}, and {{sidebar}} placeholders the script will replace during build for your `header.html`.
+if you want to use them, there are `{{title}}`, `{{section}}`, `{{path}}`, and `{{sidebar}}` placeholders the script will replace during build for your `header.html`.
 
 more of these should probably be added in the future, but these serve for kris.sh via:
 
